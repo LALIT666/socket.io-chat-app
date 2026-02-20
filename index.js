@@ -30,25 +30,32 @@ app.get("/", (req, res) => {
   res.sendFile(join(__dirname, "index.html"));
 });
 
-// io.on("connection", (socket) => {
-//   console.log("user connected");
-//   socket.broadcast.emit("hi");
-
-//   socket.on("chat message", (msg) => {
-//     io.emit("chat message", msg);
-//   });
-
-//   socket.on("disconnect", () => {
-//     console.log("user disconnected");
-//   });
-// });
-
-io.on("connection", (socket) => {
+io.on("connection", async (socket) => {
   console.log("user connected");
   console.log("recovered?", socket.recovered);
+  if (!socket.recovered) {
+    try {
+      await db.each(
+        "SELECT id, content FROM messages WHERE id > ?",
+        [socket.handshake.auth.serverOffset || 0],
+        (_err, row) => {
+          socket.emit("chat message", row.content, row.id);
+        },
+      );
+    } catch (error) {
+      console.error("Failed to send missed messages: ", error);
+    }
+  }
 
-  socket.on("chat message", (msg) => {
-    io.emit("chat message", msg);
+  socket.on("chat message", async (msg) => {
+    let result;
+    try {
+      result = await db.run("INSERT INTO messages (content) VALUES (?)", msg);
+    } catch (error) {
+      console.error("Failed to save message: ", error);
+      return;
+    }
+    io.emit("chat message", msg, result.lastID);
   });
 
   socket.on("disconnect", () => {
